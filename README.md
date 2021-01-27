@@ -1,7 +1,7 @@
 # TF2 Web Republisher for ROS2
 
 ## Contents:
-- tf2_web_republisher (messages)
+- tf2_web_republisher_msgs (messages)
 - tf2_web_republisher_py
 
 To Run:
