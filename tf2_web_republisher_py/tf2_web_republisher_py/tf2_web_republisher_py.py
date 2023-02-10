@@ -5,12 +5,15 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from tf2_web_republisher_msgs.msg import TFArray
 from tf2_web_republisher_msgs.srv import RepublishTFs
 from tf2_web_republisher_msgs.action import TFSubscription
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import TransformStamped, Transform
 from tf2_web_republisher_py.tf_pair import TFPair
 from tf2_ros import Buffer, TransformListener, TransformException
+from rclpy.executors import MultiThreadedExecutor
+
 
 from typing import List
 from uuid import uuid4
+from time import sleep
 
 class ClientInfo(object):
     def __init__(self,client_id:int,tf_subscriptions:List[TFPair]=[],timer=None):
@@ -49,6 +52,7 @@ class TFRepublisher(Node):
     def goal_cb(self,goal_handle):
         goal = goal_handle.request
         client_id = str(uuid4())
+        self.get_logger().info("Started action with id" + str(client_id) )
         goal_info = ClientGoalInfo(goal_handle,client_id)
         self.set_subscriptions(goal_info,
                                goal.source_frames,
@@ -62,10 +66,27 @@ class TFRepublisher(Node):
         goal_info.timer = self.create_timer(1.0/goal_rate,lambda: self.process_goal(client_id))
         self.active_clients[client_id] = goal_info
 
+        # Wait for the action to be cancelled by the client
+        while client_id in self.active_clients:
+            sleep(0.1)
+        self.get_logger().info("Completed action with id" + str(client_id) )
+        result = TFSubscription.Result()
+        goal_handle.canceled()
+        return result
+
     def cancel_cb(self,goal_handle):
+        client_id_to_be_canceled = None
         for client_id, goal_info in self.active_clients.items():
             if goal_handle == goal_info.handle:
-                self.teardown_client(client_id)
+                client_id_to_be_canceled = client_id
+                break
+        if client_id_to_be_canceled:     
+            self.teardown_client(client_id_to_be_canceled)
+            self.get_logger().info("Cancelling action with id" + str(client_id_to_be_canceled) )
+            return rclpy.action.CancelResponse.ACCEPT
+        else:
+            self.get_logger().info("Cancel callback: not found action with id" + str(goal_handle) )
+            return rclpy.action.CancelResponse.REJECT
 
     def request_cb(self,request,response):
         self.get_logger().info("RepublishTF service request received");
@@ -93,11 +114,11 @@ class TFRepublisher(Node):
 
     @staticmethod
     def clean_tf_frame(frame_id:str) -> str:
-        if frame_id[0] != '/':
-            frame_id = '/'+frame_id
+        #if frame_id[0] != '/':
+        #    frame_id = '/'+frame_id
         return frame_id
 
-    def set_subscriptions(self,client_info:ClientInfo,source_frames:List[str],target_frame:str,angular_thres:float,trans_tres:float):
+    def set_subscriptions(self,client_info:ClientInfo,source_frames:List[str],target_frame:str,angular_thres:float,trans_thres:float):
         client_info.tf_subscriptions = []
         for source_frame in source_frames:
             tf_pair = TFPair(self.clean_tf_frame(source_frame),self.clean_tf_frame(target_frame),angular_thres,trans_thres)
@@ -108,8 +129,6 @@ class TFRepublisher(Node):
         client.timer.destroy()
         if isinstance(client,ClientRequestInfo):
             client.publisher.destroy()
-        elif isinstance(client,ClientGoalInfo):
-            client.handle.succeed()
         del self.active_clients[client_id]
 
     def process_request(self, client_id:str):
@@ -125,23 +144,25 @@ class TFRepublisher(Node):
         if len(tf_array) > 0:
             # publish TFs
             self.get_logger().debug('Request {0} TFs published:'.format(request.client_id))
-            request.publisher.publish(TFArray(transforms=tf_array))
+            tf_array_msg = TFArray()
+            tf_array_msg.transform = tf_array
+            request.publisher.publish(tf_array_msg)
         else:
             self.get_logger().debug('Request {0} No TF frame update needed:'.format(request.client_id))
 
     def process_goal(self, client_id:str):
-        goal = self.active_clients[client_id]
-        feedback = goal.handle.Feedback()
+        request = self.active_clients[client_id]
+        feedback = TFSubscription.Feedback()
 
         # Continue processing the request
         tf_array = self.update_subscriptions(request.tf_subscriptions)
         if len(tf_array) > 0:
             # publish TFs
-            self.get_logger().debug('Client {0} TFs feedback published:'.format(request.client_id))
-            feedback.transforms = TFArray(transforms=tf_array)
-            goal.handle.publish_feedback(feedback)
+            self.get_logger().info('Client {0} TFs feedback published:'.format(request.client_id))
+            feedback.transforms = tf_array
+            request.handle.publish_feedback(feedback)
         else:
-            self.get_logger().debug('Client {0}: No TF frame update needed:'.format(request.client_id))
+            self.get_logger().info('Client {0}: No TF frame update needed:'.format(request.client_id))
 
     def update_subscriptions(self,tf_subscriptions:List[TFPair]) -> List[TransformStamped]:
         transforms = []
@@ -150,7 +171,8 @@ class TFRepublisher(Node):
         for pair in tf_subscriptions:
             try:
                 # lookup transformation for tf_pair
-                transform = self.tf_buffer.lookupTransform(pair.target_frame,pair.source_frame,0)
+                transform = self.tf_buffer.lookup_transform(pair.target_frame,pair.source_frame,
+                        rclpy.time.Time())
                 # If the transform broke earlier, but worked now (we didn't get
                 # booted into the catch block), tell the user all is well again
                 if not pair.is_ok:
@@ -166,13 +188,14 @@ class TFRepublisher(Node):
                 pair.is_ok = False
 
             # check angular and translational thresholds
-            if pair.needs_update:
-                transform.header.stamp = self.get_clock().now().to_msg()
-                transform.header.frame_id = pair.target_frame
-                transform.child_frame_id = pair.source_frame
+            if pair.update_needed:
+                transform_msg = TransformStamped()
+                transform_msg.header.stamp = self.get_clock().now().to_msg()
+                transform_msg.header.frame_id = pair.target_frame
+                transform_msg.child_frame_id = pair.source_frame
+                transform_msg.transform = pair.last_tf_msg
                 pair.transmission_triggered()
-
-            transforms.append(transform)
+                transforms.append(transform_msg)
 
         return transforms
 
@@ -181,7 +204,10 @@ def main(args=[]):
 
     tf_republisher_node = TFRepublisher()
 
-    rclpy.spin(tf_republisher_node)
+    # Use a MultiThreadedExecutor to enable processing goals concurrently
+    executor = MultiThreadedExecutor()
+
+    rclpy.spin(tf_republisher_node, executor)
 
 
 if __name__ == '__main__':
