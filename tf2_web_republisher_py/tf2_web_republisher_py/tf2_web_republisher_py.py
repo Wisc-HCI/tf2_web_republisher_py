@@ -52,10 +52,14 @@ class TFRepublisher(Node):
         goal_info = ClientGoalInfo(goal_handle,client_id)
         self.set_subscriptions(goal_info,
                                goal.source_frames,
-                               goal.target_frames,
+                               goal.target_frame,
                                goal.angular_thres,
                                goal.trans_thres)
-        goal_info.timer = self.create_timer(1.0/goal.rate,lambda: self.process_goal(client_id))
+        goal_rate = goal.rate           
+        if goal_rate == 0:
+            # If the goal rate is not specified, set it to 10Hz             
+            goal_rate = 10.0
+        goal_info.timer = self.create_timer(1.0/goal_rate,lambda: self.process_goal(client_id))
         self.active_clients[client_id] = goal_info
 
     def cancel_cb(self,goal_handle):
@@ -73,11 +77,15 @@ class TFRepublisher(Node):
         request_info = ClientRequestInfo(pub,client_id)
         self.set_subscriptions(request_info,
                                request.source_frames,
-                               request.target_frames,
+                               request.target_frame,
                                request.angular_thres,
                                request.trans_thres)
         request_info.timeout = request.timeout
-        request_info.timer = self.create_timer(1.0/request.rate,lambda: self.process_request(client_id))
+        request_rate = request.rate
+        if request_rate == 0:
+            # If the request rate is not specified, set it to 10Hz             
+            request_rate = 10.0   
+        request_info.timer = self.create_timer(request_rate,lambda: self.process_request(client_id))
         self.active_clients[client_id] = request_info
         result.topic_name = topic_name
         self.get_logger().info('Publishing requested TFs on topic {0}'.format(topic_name))
