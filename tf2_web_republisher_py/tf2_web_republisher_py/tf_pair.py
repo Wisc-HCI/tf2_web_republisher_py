@@ -3,6 +3,7 @@ from geometry_msgs.msg import TransformStamped, Transform
 import numpy as np
 from pyquaternion import Quaternion
 import math
+import copy
 
 class TFPair(object):
     def __init__(self,source_frame,target_frame,angular_thres=0.0,trans_thres=0.0):
@@ -65,7 +66,7 @@ class TFPair(object):
         self._updated = True
 
     def transmission_triggered(self):
-        self._tf_transmitted = self._tf_received
+        self._tf_transmitted = copy.deepcopy(self._tf_received)
 
     def update_transform(self,update:TransformStamped):
         self._tf_received['translation'] = np.array([update.transform.translation.x,update.transform.translation.y,update.transform.translation.z])
@@ -77,6 +78,8 @@ class TFPair(object):
     def update_needed(self):
         result = False
         if self._updated:
+            print(str(self.distance(self._tf_transmitted,self._tf_received)))
+            print(str(self.angle(self._tf_transmitted,self._tf_received)))
             if self._trans_thres == 0.0 or self._angular_thres == 0.0:
                 result = True
                 self.first_transmission = False
