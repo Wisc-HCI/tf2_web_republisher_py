@@ -78,8 +78,6 @@ class TFPair(object):
     def update_needed(self):
         result = False
         if self._updated:
-            print(str(self.distance(self._tf_transmitted,self._tf_received)))
-            print(str(self.angle(self._tf_transmitted,self._tf_received)))
             if self._trans_thres == 0.0 or self._angular_thres == 0.0:
                 result = True
                 self.first_transmission = False

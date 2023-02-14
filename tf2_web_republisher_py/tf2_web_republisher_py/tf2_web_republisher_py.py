@@ -2,14 +2,13 @@ import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionServer
 from rclpy.callback_groups import ReentrantCallbackGroup
-from tf2_web_republisher_msgs.msg import TFArray
-from tf2_web_republisher_msgs.srv import RepublishTFs
-from tf2_web_republisher_msgs.action import TFSubscription
+from tf2_web_republisher.msg import TFArray
+from tf2_web_republisher.srv import RepublishTFs
+from tf2_web_republisher.action import TFSubscription
 from geometry_msgs.msg import TransformStamped, Transform
 from tf2_web_republisher_py.tf_pair import TFPair
 from tf2_ros import Buffer, TransformListener, TransformException
 from rclpy.executors import MultiThreadedExecutor
-
 
 from typing import List
 from uuid import uuid4
@@ -31,7 +30,8 @@ class ClientRequestInfo(ClientInfo):
         super(ClientRequestInfo,self).__init__(client_id,tf_subscriptions,timer)
         self.publisher = publisher
         self.timeout = timeout
-        self.last_time_since_subscribers = 0
+        self.last_time_since_subscribers = None
+
 
 class TFRepublisher(Node):
     '''
@@ -90,12 +90,13 @@ class TFRepublisher(Node):
 
     def request_cb(self,request,response):
         self.get_logger().info("RepublishTF service request received");
-        client_id = str(uuid4())
+        client_id = str(uuid4()).replace("-", "_")
         topic_name = 'tf_repub_'+client_id
 
-        pub = self.create_publisher(TFArray,topic_name,10)
+        pub = self.create_publisher(TFArray,topic_name,10 )
+
         # generate request_info struct
-        request_info = ClientRequestInfo(pub,client_id)
+        request_info = ClientRequestInfo(client_id, publisher = pub)
         self.set_subscriptions(request_info,
                                request.source_frames,
                                request.target_frame,
@@ -106,9 +107,9 @@ class TFRepublisher(Node):
         if request_rate == 0:
             # If the request rate is not specified, set it to 10Hz             
             request_rate = 10.0   
-        request_info.timer = self.create_timer(request_rate,lambda: self.process_request(client_id))
+        request_info.timer = self.create_timer(1.0/request_rate,lambda: self.process_request(client_id))
         self.active_clients[client_id] = request_info
-        result.topic_name = topic_name
+        response.topic_name = topic_name
         self.get_logger().info('Publishing requested TFs on topic {0}'.format(topic_name))
         return response
 
@@ -125,27 +126,38 @@ class TFRepublisher(Node):
             client_info.tf_subscriptions.append(tf_pair)
 
     def teardown_client(self,client_id):
+        self.get_logger().info("Tearing down publisher")
         client = self.active_clients[client_id]
         client.timer.destroy()
-        if isinstance(client,ClientRequestInfo):
-            client.publisher.destroy()
         del self.active_clients[client_id]
-
+        # The desctuction of the publisher is not invoked
+        # becaused it causes a crash
+       
     def process_request(self, client_id:str):
-        request = self.active_clients[client_id]
+        request = None
+        try:
+            request = self.active_clients[client_id]
+        except:
+            # The id has already been removed
+            self.get_logger().info('Trying to access removed request:'.format(client_id))
+            return            
         # Check whether the publisher has any subscribers. If it does, update the stored time.
-        if request.pub.get_subscription_count() > 0:
+        if request.publisher.get_subscription_count() > 0:
             request.last_time_since_subscribers = self.get_clock().now()
-        elif self.get_clock().now() - request.last_time_since_subscribers > request.timeout:
+        elif request.last_time_since_subscribers is None:
+            return # wait for the first subscriber
+        else:
+        #elif (self.get_clock().now() - request.last_time_since_subscribers).to_sec() > request.timeout.sec + request.timeout.nanosec * 1000000000:
             self.teardown_client(client_id)
             return
+
         # Continue processing the request
         tf_array = self.update_subscriptions(request.tf_subscriptions)
         if len(tf_array) > 0:
             # publish TFs
             self.get_logger().debug('Request {0} TFs published:'.format(request.client_id))
             tf_array_msg = TFArray()
-            tf_array_msg.transform = tf_array
+            tf_array_msg.transforms = tf_array
             request.publisher.publish(tf_array_msg)
         else:
             self.get_logger().debug('Request {0} No TF frame update needed:'.format(request.client_id))
