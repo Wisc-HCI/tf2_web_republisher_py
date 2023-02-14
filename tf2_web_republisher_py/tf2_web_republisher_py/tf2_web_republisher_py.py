@@ -26,12 +26,15 @@ class ClientGoalInfo(ClientInfo):
         self.handle = handle
 
 class ClientRequestInfo(ClientInfo):
-    def __init__(self,client_id:int,tf_subscriptions:List[TFPair]=[],publisher=None,timer=None,timeout:float=10.0):
+    def __init__(self,client_id:int, node, publisher, tf_subscriptions:List[TFPair]=[],timer=None,timeout:float=10.0):
         super(ClientRequestInfo,self).__init__(client_id,tf_subscriptions,timer)
-        self.publisher = publisher
+        self.publisher = publisher    
         self.timeout = timeout
         self.last_time_since_subscribers = None
+        self.node = node
 
+    def __del__(self):
+        self.node.destroy_publisher(self.publisher)
 
 class TFRepublisher(Node):
     '''
@@ -96,7 +99,7 @@ class TFRepublisher(Node):
         pub = self.create_publisher(TFArray,topic_name,10 )
 
         # generate request_info struct
-        request_info = ClientRequestInfo(client_id, publisher = pub)
+        request_info = ClientRequestInfo(client_id, self, pub)
         self.set_subscriptions(request_info,
                                request.source_frames,
                                request.target_frame,
@@ -130,8 +133,6 @@ class TFRepublisher(Node):
         client = self.active_clients[client_id]
         client.timer.destroy()
         del self.active_clients[client_id]
-        # The desctuction of the publisher is not invoked
-        # becaused it causes a crash
        
     def process_request(self, client_id:str):
         request = None
