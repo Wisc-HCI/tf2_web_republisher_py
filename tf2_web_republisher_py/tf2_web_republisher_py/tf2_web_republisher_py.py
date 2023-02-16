@@ -156,12 +156,12 @@ class TFRepublisher(Node):
         tf_array = self.update_subscriptions(request.tf_subscriptions)
         if len(tf_array) > 0:
             # publish TFs
-            self.get_logger().debug('Request {0} TFs published:'.format(request.client_id))
+            #self.get_logger().debug('Request {0} TFs published:'.format(request.client_id))
             tf_array_msg = TFArray()
             tf_array_msg.transforms = tf_array
             request.publisher.publish(tf_array_msg)
-        else:
-            self.get_logger().debug('Request {0} No TF frame update needed:'.format(request.client_id))
+#        else:
+#            self.get_logger().debug('Request {0} No TF frame update needed:'.format(request.client_id))
 
     def process_goal(self, client_id:str):
         request = self.active_clients[client_id]
@@ -179,6 +179,8 @@ class TFRepublisher(Node):
 
     def update_subscriptions(self,tf_subscriptions:List[TFPair]) -> List[TransformStamped]:
         transforms = []
+
+        current_time_msg = self.get_clock().now().to_msg() 
 
         # iterate over tf_subscription vector
         for pair in tf_subscriptions:
@@ -203,7 +205,7 @@ class TFRepublisher(Node):
             # check angular and translational thresholds
             if pair.update_needed:
                 transform_msg = TransformStamped()
-                transform_msg.header.stamp = self.get_clock().now().to_msg()
+                transform_msg.header.stamp = current_time_msg
                 transform_msg.header.frame_id = pair.target_frame
                 transform_msg.child_frame_id = pair.source_frame
                 transform_msg.transform = pair.last_tf_msg
