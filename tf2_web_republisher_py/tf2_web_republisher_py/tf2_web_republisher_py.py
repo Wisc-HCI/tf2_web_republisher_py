@@ -48,8 +48,6 @@ class TFRepublisher(Node):
                                                 execute_callback=self.goal_cb,
                                                 cancel_callback=self.cancel_cb)
         self.republish_service = self.create_service(RepublishTFs, 'republish_tfs', self.request_cb)
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer,node=self)
         self.active_clients = {}
 
     def goal_cb(self,goal_handle):
@@ -67,11 +65,21 @@ class TFRepublisher(Node):
             # If the goal rate is not specified, set it to 10Hz             
             goal_rate = 10.0
         goal_info.timer = self.create_timer(1.0/goal_rate,lambda: self.process_goal(client_id))
+
+        if not self.active_clients:
+            self.tf_buffer = Buffer()
+            self.tf_listener = TransformListener(self.tf_buffer,node=self)           
         self.active_clients[client_id] = goal_info
 
         # Wait for the action to be cancelled by the client
         while client_id in self.active_clients:
             sleep(0.1)
+
+        if not self.active_clients :
+            # Stop listening to tf to save cpu
+            self.tf_listener = None
+            self.tf_buffer = None
+
         self.get_logger().info("Completed action with id" + str(client_id) )
         result = TFSubscription.Result()
         goal_handle.canceled()
@@ -96,7 +104,7 @@ class TFRepublisher(Node):
         client_id = str(uuid4()).replace("-", "_")
         topic_name = 'tf_repub_'+client_id
 
-        pub = self.create_publisher(TFArray,topic_name,10 )
+        pub = self.create_publisher(TFArray,topic_name,1 )
 
         # generate request_info struct
         request_info = ClientRequestInfo(client_id, self, pub)
@@ -111,6 +119,10 @@ class TFRepublisher(Node):
             # If the request rate is not specified, set it to 10Hz             
             request_rate = 10.0   
         request_info.timer = self.create_timer(1.0/request_rate,lambda: self.process_request(client_id))
+        if not self.active_clients:
+            self.tf_buffer = Buffer()
+            self.tf_listener = TransformListener(self.tf_buffer,node=self)            
+
         self.active_clients[client_id] = request_info
         response.topic_name = topic_name
         self.get_logger().info('Publishing requested TFs on topic {0}'.format(topic_name))
@@ -133,7 +145,11 @@ class TFRepublisher(Node):
         client = self.active_clients[client_id]
         client.timer.destroy()
         del self.active_clients[client_id]
-       
+        if not self.active_clients :
+            # Stop listening to tf to save cpu
+            self.tf_listener = None
+            self.tf_buffer = None
+
     def process_request(self, client_id:str):
         request = None
         try:
@@ -220,9 +236,9 @@ def main(args=[]):
     tf_republisher_node = TFRepublisher()
 
     # Use a MultiThreadedExecutor to enable processing goals concurrently
-    executor = MultiThreadedExecutor()
+    #executor = MultiThreadedExecutor()
 
-    rclpy.spin(tf_republisher_node, executor)
+    rclpy.spin(tf_republisher_node) #, executor)
 
 
 if __name__ == '__main__':
