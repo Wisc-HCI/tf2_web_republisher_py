@@ -7,3 +7,6 @@
 To Run:
 
 ```ros2 run tf2_web_republisher_py tf2_web_republisher```
+
+Note:
+Note that, in order to make it work with ROSLIB, the groovyCompatibility option of the ROSLIB.Ros constructor should be set to false.
