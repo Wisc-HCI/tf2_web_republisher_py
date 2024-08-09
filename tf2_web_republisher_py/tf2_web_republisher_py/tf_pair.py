@@ -1,20 +1,26 @@
-from tf2_msgs.msg import TFMessage
-from geometry_msgs.msg import TransformStamped, Transform
-import numpy as np
-from pyquaternion import Quaternion
-import math
 import copy
 
+import numpy as np
+from geometry_msgs.msg import Transform, TransformStamped
+from scipy.spatial.transform import Rotation
+
+
 class TFPair(object):
-    def __init__(self,source_frame,target_frame,angular_thres=0.0,trans_thres=0.0):
+    def __init__(self, source_frame, target_frame, angular_thres=0.0, trans_thres=0.0):
         self.is_ok = True
         self._source_frame = source_frame
         self._target_frame = target_frame
         self._angular_thres = angular_thres
         self._trans_thres = trans_thres
 
-        self._tf_transmitted = {'translation':np.array([0.0,0.0,0.0]),'rotation':Quaternion(1.0,0.0,0.0,0.0)}
-        self._tf_received = {'translation':np.array([0.0,0.0,0.0]),'rotation':Quaternion(1.0,0.0,0.0,0.0)}
+        self._tf_transmitted = {
+            "translation": np.array([0.0, 0.0, 0.0]),
+            "rotation": Rotation.identity(),
+        }
+        self._tf_received = {
+            "translation": np.array([0.0, 0.0, 0.0]),
+            "rotation": Rotation.identity(),
+        }
 
         self._last_tf_msg = Transform()
 
@@ -23,7 +29,7 @@ class TFPair(object):
 
     @property
     def id(self):
-        return self._source_frame + '-' + self._target_frame
+        return self._source_frame + "-" + self._target_frame
 
     @property
     def source_frame(self):
@@ -46,31 +52,44 @@ class TFPair(object):
         return self._last_tf_msg
 
     @source_frame.setter
-    def source_frame(self,value):
+    def source_frame(self, value):
         self._source_frame = value
         self._updated = True
 
     @target_frame.setter
-    def target_frame(self,value):
+    def target_frame(self, value):
         self._target_frame = value
         self._updated = True
 
     @angular_thres.setter
-    def angular_thres(self,value):
+    def angular_thres(self, value):
         self._angular_thres = value
         self._updated = True
 
     @trans_thres.setter
-    def trans_thres(self,value):
+    def trans_thres(self, value):
         self._trans_thres = value
         self._updated = True
 
     def transmission_triggered(self):
         self._tf_transmitted = copy.deepcopy(self._tf_received)
 
-    def update_transform(self,update:TransformStamped):
-        self._tf_received['translation'] = np.array([update.transform.translation.x,update.transform.translation.y,update.transform.translation.z])
-        self._tf_received['rotation'] = Quaternion(update.transform.rotation.w,update.transform.rotation.x,update.transform.rotation.y,update.transform.rotation.z)
+    def update_transform(self, update: TransformStamped):
+        self._tf_received["translation"] = np.array(
+            [
+                update.transform.translation.x,
+                update.transform.translation.y,
+                update.transform.translation.z,
+            ]
+        )
+        self._tf_received["rotation"] = Rotation.from_quat(
+            [
+                update.transform.rotation.x,
+                update.transform.rotation.y,
+                update.transform.rotation.z,
+                update.transform.rotation.w,
+            ]
+        )
         self._last_tf_msg = update.transform
         self._updated = True
 
@@ -81,10 +100,16 @@ class TFPair(object):
             if self._trans_thres == 0.0 or self._angular_thres == 0.0:
                 result = True
                 self.first_transmission = False
-            elif self.distance(self._tf_transmitted,self._tf_received) > self._trans_thres:
+            elif (
+                self.distance(self._tf_transmitted, self._tf_received)
+                > self._trans_thres
+            ):
                 result = True
                 self.first_transmission = False
-            elif self.angle(self._tf_transmitted,self._tf_received) > self._angular_thres:
+            elif (
+                self.angle(self._tf_transmitted, self._tf_received)
+                > self._angular_thres
+            ):
                 result = True
                 self.first_transmission = False
             elif self.first_transmission:
@@ -94,11 +119,13 @@ class TFPair(object):
         self._updated = False
         return result
 
+    @staticmethod
+    def distance(tf1, tf2):
+        return np.linalg.norm(tf1["translation"] - tf2["translation"])
 
     @staticmethod
-    def distance(tf1,tf2):
-        return np.linalg.norm(tf1['translation']-tf2['translation'])
-
-    @staticmethod
-    def angle(tf1,tf2):
-        return Quaternion.absolute_distance(tf1['rotation'], tf2['rotation'])
+    def angle(tf1, tf2):
+        rot1: Rotation = tf1["rotation"]
+        rot2: Rotation = tf2["rotation"]
+        relative_rotation = rot1.inv() * rot2
+        return np.linalg.norm(relative_rotation.as_rotvec())

@@ -9,7 +9,7 @@
 
   <depend>tf2_ros</depend>
   <exec_depend>python3-numpy</exec_depend>
-  <exec_depend>python3-pyquaternion</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
